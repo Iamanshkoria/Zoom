@@ -28,6 +28,8 @@ function JoinMeeting() {
 
         console.log(data);
 
+        console.log(data);
+
         if (response.ok) {
             setMeeting(data);
             setMessage("");

@@ -1,3 +1,4 @@
+
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -12,11 +13,10 @@ dotenv.config();
 
 const app = express();
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 
-// Routes
+// Keep your existing API routes.
 app.use("/api", userRouter);
 app.use("/api", meetingRouter);
 
@@ -25,47 +25,86 @@ app.get("/", (req, res) => {
 });
 
 const PORT = process.env.PORT || 8000;
-
-// Create HTTP server
 const server = createServer(app);
 
-// Create Socket.IO server
 const io = new Server(server, {
     cors: {
-        origin: "*"
+        origin: "*",
+        methods: ["GET", "POST"]
     }
 });
 
-// Socket.IO connection
 io.on("connection", (socket) => {
-
     console.log("User connected:", socket.id);
 
+    // Join a meeting room.
     socket.on("join-meeting", (meetingCode) => {
-
         socket.join(meetingCode);
 
         console.log(
             `${socket.id} joined meeting: ${meetingCode}`
         );
 
+        // Notify existing participants, not the joining user.
         socket.to(meetingCode).emit("user-joined", socket.id);
+    });
+
+    // Forward a WebRTC offer to its intended participant.
+    socket.on("offer", ({ offer, to }) => {
+        if (!offer || !to) {
+            console.log("Invalid offer payload");
+            return;
+        }
+
+        console.log(`Forwarding offer: ${socket.id} -> ${to}`);
+
+        io.to(to).emit("offer", {
+            offer,
+            from: socket.id
+        });
+    });
+
+    // Forward the answer back to the offer sender.
+    socket.on("answer", ({ answer, to }) => {
+        if (!answer || !to) {
+            console.log("Invalid answer payload");
+            return;
+        }
+
+        console.log(`Forwarding answer: ${socket.id} -> ${to}`);
+
+        io.to(to).emit("answer", {
+            answer,
+            from: socket.id
+        });
+    });
+
+    // Forward ICE candidates between participants.
+    socket.on("ice-candidate", ({ candidate, to }) => {
+        if (!candidate || !to) {
+            return;
+        }
+
+        io.to(to).emit("ice-candidate", {
+            candidate,
+            from: socket.id
+        });
+    });
+
+    socket.on("disconnect", () => {
+        console.log("User disconnected:", socket.id);
     });
 });
 
-// MongoDB connection
+// Start the server only after MongoDB connects.
 mongoose.connect(process.env.MONGO_URI)
     .then(() => {
-
         console.log("MongoDB connected");
 
         server.listen(PORT, () => {
             console.log(`Listening on port ${PORT}`);
         });
-
     })
     .catch((error) => {
-
-        console.log("MongoDB connection failed:", error);
-
+        console.error("MongoDB connection failed:", error);
     });

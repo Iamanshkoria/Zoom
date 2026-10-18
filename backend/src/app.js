@@ -16,7 +16,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Keep your existing API routes.
+// Existing API routes
 app.use("/api", userRouter);
 app.use("/api", meetingRouter);
 
@@ -37,20 +37,28 @@ const io = new Server(server, {
 io.on("connection", (socket) => {
     console.log("User connected:", socket.id);
 
-    // Join a meeting room.
+    // Join a meeting room
     socket.on("join-meeting", (meetingCode) => {
-        socket.join(meetingCode);
+        if (
+            typeof meetingCode !== "string" ||
+            !meetingCode.trim()
+        ) {
+            console.log("Invalid meeting code");
+            return;
+        }
 
-        console.log(
-            `${socket.id} joined meeting: ${meetingCode}`
-        );
+        const room = meetingCode.trim();
 
-        // Notify existing participants, not the joining user.
-        socket.to(meetingCode).emit("user-joined", socket.id);
+        socket.join(room);
+
+        console.log(`${socket.id} joined meeting: ${room}`);
+
+        // Notify existing participants
+        socket.to(room).emit("user-joined", socket.id);
     });
 
-    // Forward a WebRTC offer to its intended participant.
-    socket.on("offer", ({ offer, to }) => {
+    // Forward WebRTC offer
+    socket.on("offer", ({ offer, to } = {}) => {
         if (!offer || !to) {
             console.log("Invalid offer payload");
             return;
@@ -64,8 +72,8 @@ io.on("connection", (socket) => {
         });
     });
 
-    // Forward the answer back to the offer sender.
-    socket.on("answer", ({ answer, to }) => {
+    // Forward WebRTC answer
+    socket.on("answer", ({ answer, to } = {}) => {
         if (!answer || !to) {
             console.log("Invalid answer payload");
             return;
@@ -79,8 +87,8 @@ io.on("connection", (socket) => {
         });
     });
 
-    // Forward ICE candidates between participants.
-    socket.on("ice-candidate", ({ candidate, to }) => {
+    // Forward ICE candidates
+    socket.on("ice-candidate", ({ candidate, to } = {}) => {
         if (!candidate || !to) {
             return;
         }
@@ -91,12 +99,25 @@ io.on("connection", (socket) => {
         });
     });
 
+    // Notify other participants when this user disconnects
+    socket.on("disconnecting", () => {
+        for (const room of socket.rooms) {
+            if (room !== socket.id) {
+                socket.to(room).emit("user-left", socket.id);
+
+                console.log(
+                    `User ${socket.id} leaving meeting: ${room}`
+                );
+            }
+        }
+    });
+
     socket.on("disconnect", () => {
         console.log("User disconnected:", socket.id);
     });
 });
 
-// Start the server only after MongoDB connects.
+// Start the server after MongoDB connects
 mongoose.connect(process.env.MONGO_URI)
     .then(() => {
         console.log("MongoDB connected");

@@ -5,93 +5,89 @@ import CreateMeeting from "./CreateMeeting.jsx";
 import JoinMeeting from "./Joinmeeting.jsx";
 
 export default function Home() {
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+    const [user, setUser] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState("");
 
-  useEffect(() => {
-    const getUser = async () => {
-      const token = localStorage.getItem("Token");
+    useEffect(() => {
+        const getUser = async () => {
+            const token = localStorage.getItem("Token");
 
-      if (!token) {
-        setError("You are not logged in. Please log in first.");
-        setLoading(false);
-        return;
-      }
+            if (!token) {
+                setError("You are not logged in. Please log in first.");
+                setLoading(false);
+                return;
+            }
 
-      try {
-        const response = await fetch("http://localhost:8000/api/me", {
-          method: "GET",
-          headers: {
-            Authorization: token,
-          },
-        });
+            try {
+                const response = await fetch(
+                    "http://localhost:8000/api/me",
+                    {
+                        method: "GET",
+                        headers: {
+                            Authorization: `Bearer ${token}`
+                        }
+                    }
+                );
 
-        const responseText = await response.text();
+                const data = await response.json();
 
-        let data;
+                console.log("API status:", response.status);
+                console.log("API response:", data);
 
-        try {
-          data = JSON.parse(responseText);
-        } catch {
-          throw new Error(
-            `The server returned an invalid response. HTTP status: ${response.status}`
-          );
-        }
+                if (!response.ok) {
+                    throw new Error(
+                        data.message ||
+                        `Request failed with status ${response.status}`
+                    );
+                }
 
-        console.log("API status:", response.status);
-        console.log("API response:", data);
+                setUser(data);
+                setError("");
+            } catch (err) {
+                console.error("Failed to fetch user:", err);
+                setError(err.message || "Unable to load your account.");
+            } finally {
+                setLoading(false);
+            }
+        };
 
-        if (!response.ok) {
-          throw new Error(
-            data.message || `Request failed with status ${response.status}`
-          );
-        }
+        getUser();
+    }, []);
 
-        setUser(data);
-        setError("");
-      } catch (err) {
-        console.error("Failed to fetch user:", err);
-        setError(err.message || "Unable to load your account.");
-      } finally {
-        setLoading(false);
-      }
-    };
+    return (
+        <div className="container py-5">
+            <div className="text-center mb-5">
+                <h1 className="fw-bold">Meeting App</h1>
 
-    getUser();
-  }, []);
+                {loading && (
+                    <p className="text-muted">
+                        Loading your account...
+                    </p>
+                )}
 
-  return (
-    <div className="container py-5">
-      <div className="text-center mb-5">
-        <h1 className="fw-bold">Meeting App</h1>
+                {!loading && user && (
+                    <p className="text-muted fs-5">
+                        Welcome, {user.username}
+                    </p>
+                )}
 
-        {loading && (
-          <p className="text-muted">Loading your account...</p>
-        )}
+                {!loading && error && (
+                    <div className="alert alert-danger" role="alert">
+                        {error}
+                    </div>
+                )}
+            </div>
 
-        {!loading && user && (
-          <p className="text-muted fs-5">
-            Welcome, {user.username}
-          </p>
-        )}
+            <div className="row g-4">
+                <div className="col-md-6">
+                    <CreateMeeting />
+                </div>
 
-        {!loading && error && (
-          <div className="alert alert-danger" role="alert">
-            {error}
-          </div>
-        )}
-      </div>
-
-      <div className="row g-4">
-        <div className="col-md-6">
-          <CreateMeeting />
+                <div className="col-md-6">
+                    <JoinMeeting />
+                </div>
+            </div>
         </div>
-
-        <div className="col-md-6">
-          <JoinMeeting />
-        </div>
-      </div>
-    </div>
-  );
+    );
 }

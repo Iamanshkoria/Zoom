@@ -16,7 +16,6 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Existing API routes
 app.use("/api", userRouter);
 app.use("/api", meetingRouter);
 
@@ -25,19 +24,19 @@ app.get("/", (req, res) => {
 });
 
 const PORT = process.env.PORT || 8000;
+
 const server = createServer(app);
 
 const io = new Server(server, {
     cors: {
         origin: "*",
-        methods: ["GET", "POST"]
-    }
+        methods: ["GET", "POST"],
+    },
 });
 
 io.on("connection", (socket) => {
     console.log("User connected:", socket.id);
 
-    // Join a meeting room
     socket.on("join-meeting", (meetingCode) => {
         if (
             typeof meetingCode !== "string" ||
@@ -50,14 +49,13 @@ io.on("connection", (socket) => {
         const room = meetingCode.trim();
 
         socket.join(room);
+        socket.data.meetingCode = room;
 
         console.log(`${socket.id} joined meeting: ${room}`);
 
-        // Notify existing participants
         socket.to(room).emit("user-joined", socket.id);
     });
 
-    // Forward WebRTC offer
     socket.on("offer", ({ offer, to } = {}) => {
         if (!offer || !to) {
             console.log("Invalid offer payload");
@@ -68,11 +66,10 @@ io.on("connection", (socket) => {
 
         io.to(to).emit("offer", {
             offer,
-            from: socket.id
+            from: socket.id,
         });
     });
 
-    // Forward WebRTC answer
     socket.on("answer", ({ answer, to } = {}) => {
         if (!answer || !to) {
             console.log("Invalid answer payload");
@@ -83,23 +80,42 @@ io.on("connection", (socket) => {
 
         io.to(to).emit("answer", {
             answer,
-            from: socket.id
+            from: socket.id,
         });
     });
 
-    // Forward ICE candidates
     socket.on("ice-candidate", ({ candidate, to } = {}) => {
-        if (!candidate || !to) {
-            return;
-        }
+        if (!candidate || !to) return;
 
         io.to(to).emit("ice-candidate", {
             candidate,
-            from: socket.id
+            from: socket.id,
         });
     });
 
-    // Notify other participants when this user disconnects
+    // Real-time meeting chat
+    socket.on("chat-message", (text) => {
+        const room = socket.data.meetingCode;
+
+        if (
+            !room ||
+            typeof text !== "string" ||
+            !text.trim()
+        ) {
+            return;
+        }
+
+        const message = {
+            id: `${socket.id}-${Date.now()}`,
+            senderId: socket.id,
+            text: text.trim().slice(0, 1000),
+            time: new Date().toISOString(),
+        };
+
+        // Send the message to everyone in this room, including the sender.
+        io.to(room).emit("chat-message", message);
+    });
+
     socket.on("disconnecting", () => {
         for (const room of socket.rooms) {
             if (room !== socket.id) {
@@ -117,8 +133,8 @@ io.on("connection", (socket) => {
     });
 });
 
-// Start the server after MongoDB connects
-mongoose.connect(process.env.MONGO_URI)
+mongoose
+    .connect(process.env.MONGO_URI)
     .then(() => {
         console.log("MongoDB connected");
 

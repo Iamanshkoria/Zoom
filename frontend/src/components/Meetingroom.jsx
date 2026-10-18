@@ -2,12 +2,13 @@
 import { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
 
-function Meetingroom({ meetingCode }) {
+function Meetingroom({ meetingCode, onLeave }) {
     const localVideoRef = useRef(null);
     const remoteVideoRef = useRef(null);
     const socketRef = useRef(null);
     const peerRef = useRef(null);
     const streamRef = useRef(null);
+    const screenStreamRef = useRef(null);
     const remoteSocketIdRef = useRef(null);
     const pendingCandidatesRef = useRef([]);
 
@@ -16,6 +17,18 @@ function Meetingroom({ meetingCode }) {
     const [message, setMessage] = useState("");
     const [muted, setMuted] = useState(false);
     const [cameraOff, setCameraOff] = useState(false);
+    const [isSharingScreen, setIsSharingScreen] = useState(false);
+
+    const [chatInput, setChatInput] = useState("");
+    const [chatMessages, setChatMessages] = useState([]);
+
+    const chatEndRef = useRef(null);
+
+    useEffect(() => {
+        chatEndRef.current?.scrollIntoView({
+            behavior: "smooth",
+        });
+    }, [chatMessages]);
 
     useEffect(() => {
         if (!meetingCode) return;
@@ -45,19 +58,26 @@ function Meetingroom({ meetingCode }) {
                 peerRef.current = peer;
 
                 peer.ontrack = (event) => {
-                    if (cancelled || !remoteVideoRef.current) return;
-
-                    if (event.streams && event.streams[0]) {
-                        remoteVideoRef.current.srcObject =
-                            event.streams[0];
-
-                        remoteVideoRef.current.play().catch(() => {});
-                        setMessage("");
+                    if (
+                        cancelled ||
+                        !remoteVideoRef.current ||
+                        !event.streams?.[0]
+                    ) {
+                        return;
                     }
+
+                    remoteVideoRef.current.srcObject =
+                        event.streams[0];
+
+                    remoteVideoRef.current.play().catch(() => {});
+                    setMessage("");
                 };
 
                 peer.onicecandidate = (event) => {
-                    if (event.candidate && remoteSocketIdRef.current) {
+                    if (
+                        event.candidate &&
+                        remoteSocketIdRef.current
+                    ) {
                         socket.emit("ice-candidate", {
                             candidate: event.candidate,
                             to: remoteSocketIdRef.current,
@@ -68,26 +88,29 @@ function Meetingroom({ meetingCode }) {
                 peer.onconnectionstatechange = () => {
                     if (cancelled) return;
 
-                    if (peer.connectionState === "connected") {
-                        setStatus("Connected");
-                    } else if (
-                        peer.connectionState === "connecting"
-                    ) {
-                        setStatus("Connecting media...");
-                    } else if (
-                        peer.connectionState === "disconnected"
-                    ) {
-                        setStatus("Connection interrupted");
-                    } else if (peer.connectionState === "failed") {
-                        setStatus("Connection failed");
-                    } else if (peer.connectionState === "closed") {
-                        setStatus("Call ended");
+                    switch (peer.connectionState) {
+                        case "connected":
+                            setStatus("Connected");
+                            break;
+                        case "connecting":
+                            setStatus("Connecting media...");
+                            break;
+                        case "disconnected":
+                            setStatus("Connection interrupted");
+                            break;
+                        case "failed":
+                            setStatus("Connection failed");
+                            break;
+                        case "closed":
+                            setStatus("Call ended");
+                            break;
+                        default:
+                            break;
                     }
                 };
 
                 socket.on("connect", () => {
                     console.log("Socket connected:", socket.id);
-
                     socket.emit("join-meeting", meetingCode);
                     setStatus("Waiting for another participant...");
                 });
@@ -96,7 +119,9 @@ function Meetingroom({ meetingCode }) {
                     console.error("Socket connection error:", err);
 
                     if (!cancelled) {
-                        setError("Unable to connect to the meeting server.");
+                        setError(
+                            "Unable to connect to the meeting server."
+                        );
                     }
                 });
 
@@ -104,17 +129,17 @@ function Meetingroom({ meetingCode }) {
                     if (cancelled || !peerRef.current) return;
 
                     try {
-                        console.log("Participant joined:", userId);
-
                         remoteSocketIdRef.current = userId;
                         setMessage("");
                         setStatus("Connecting media...");
 
-                        const offer = await peer.createOffer();
-                        await peer.setLocalDescription(offer);
+                        const currentPeer = peerRef.current;
+                        const offer = await currentPeer.createOffer();
+
+                        await currentPeer.setLocalDescription(offer);
 
                         socket.emit("offer", {
-                            offer: peer.localDescription,
+                            offer: currentPeer.localDescription,
                             to: userId,
                         });
 
@@ -129,102 +154,93 @@ function Meetingroom({ meetingCode }) {
                     if (cancelled || !peerRef.current) return;
 
                     try {
-                        console.log("Offer received from:", from);
+                        const currentPeer = peerRef.current;
 
                         remoteSocketIdRef.current = from;
 
-                        await peer.setRemoteDescription(
+                        await currentPeer.setRemoteDescription(
                             new RTCSessionDescription(offer)
                         );
 
                         for (const candidate of pendingCandidatesRef.current) {
-                            await peer.addIceCandidate(
+                            await currentPeer.addIceCandidate(
                                 new RTCIceCandidate(candidate)
                             );
                         }
 
                         pendingCandidatesRef.current = [];
 
-                        const answer = await peer.createAnswer();
-                        await peer.setLocalDescription(answer);
+                        const answer = await currentPeer.createAnswer();
+
+                        await currentPeer.setLocalDescription(answer);
 
                         socket.emit("answer", {
-                            answer: peer.localDescription,
+                            answer: currentPeer.localDescription,
                             to: from,
                         });
-
-                        console.log("Answer sent to:", from);
                     } catch (err) {
                         console.error("Error handling offer:", err);
-                        setError("Could not establish the video connection.");
+                        setError(
+                            "Could not establish the video connection."
+                        );
                     }
                 });
 
-                socket.on("answer", async ({ answer, from }) => {
+                socket.on("answer", async ({ answer }) => {
                     if (cancelled || !peerRef.current) return;
 
                     try {
-                        console.log("Answer received from:", from);
+                        const currentPeer = peerRef.current;
 
-                        await peer.setRemoteDescription(
+                        await currentPeer.setRemoteDescription(
                             new RTCSessionDescription(answer)
                         );
 
                         for (const candidate of pendingCandidatesRef.current) {
-                            await peer.addIceCandidate(
+                            await currentPeer.addIceCandidate(
                                 new RTCIceCandidate(candidate)
                             );
                         }
 
                         pendingCandidatesRef.current = [];
-
-                        console.log("Remote description set successfully.");
                     } catch (err) {
                         console.error("Error handling answer:", err);
                     }
                 });
 
-                socket.on(
-                    "ice-candidate",
-                    async ({ candidate, from }) => {
-                        if (
-                            cancelled ||
-                            !peerRef.current ||
-                            !candidate
-                        ) {
-                            return;
-                        }
-
-                        try {
-                            if (peer.remoteDescription) {
-                                await peer.addIceCandidate(
-                                    new RTCIceCandidate(candidate)
-                                );
-                            } else {
-                                pendingCandidatesRef.current.push(candidate);
-                            }
-                        } catch (err) {
-                            console.error(
-                                "Error adding ICE candidate:",
-                                err
-                            );
-                        }
+                socket.on("ice-candidate", async ({ candidate }) => {
+                    if (
+                        cancelled ||
+                        !peerRef.current ||
+                        !candidate
+                    ) {
+                        return;
                     }
-                );
 
-                // Handle the other participant leaving.
+                    try {
+                        const currentPeer = peerRef.current;
+
+                        if (currentPeer.remoteDescription) {
+                            await currentPeer.addIceCandidate(
+                                new RTCIceCandidate(candidate)
+                            );
+                        } else {
+                            pendingCandidatesRef.current.push(candidate);
+                        }
+                    } catch (err) {
+                        console.error("Error adding ICE candidate:", err);
+                    }
+                });
+
                 socket.on("user-left", (userId) => {
                     if (cancelled) return;
 
-                    // Ignore a departure notification from an unrelated user.
                     if (
                         remoteSocketIdRef.current &&
                         userId !== remoteSocketIdRef.current
                     ) {
                         return;
                     }
-
-                    console.log("Participant left:", userId);
 
                     remoteSocketIdRef.current = null;
                     pendingCandidatesRef.current = [];
@@ -233,25 +249,37 @@ function Meetingroom({ meetingCode }) {
                         remoteVideoRef.current.srcObject = null;
                     }
 
-                    // Close the old peer connection so a new participant
-                    // can connect without reusing stale connection state.
                     if (peerRef.current) {
                         peerRef.current.close();
                         peerRef.current = null;
                     }
 
                     setStatus("Waiting for another participant...");
-                    setMessage("The other participant has left the meeting.");
+                    setMessage(
+                        "The other participant has left the meeting."
+                    );
                 });
 
-                // Get access to the local camera and microphone.
-                localStream = await navigator.mediaDevices.getUserMedia({
-                    video: true,
-                    audio: true,
+                // Receive chat messages.
+                socket.on("chat-message", (chatMessage) => {
+                    if (cancelled || !chatMessage) return;
+
+                    setChatMessages((previous) => [
+                        ...previous,
+                        chatMessage,
+                    ]);
                 });
+
+                localStream =
+                    await navigator.mediaDevices.getUserMedia({
+                        video: true,
+                        audio: true,
+                    });
 
                 if (cancelled) {
-                    localStream.getTracks().forEach((track) => track.stop());
+                    localStream
+                        .getTracks()
+                        .forEach((track) => track.stop());
                     return;
                 }
 
@@ -276,7 +304,7 @@ function Meetingroom({ meetingCode }) {
                         );
                     } else if (err.name === "NotFoundError") {
                         setError(
-                            "No camera or microphone was found on this device."
+                            "No camera or microphone was found."
                         );
                     } else {
                         setError(
@@ -302,7 +330,18 @@ function Meetingroom({ meetingCode }) {
             }
 
             if (localStream) {
-                localStream.getTracks().forEach((track) => track.stop());
+                localStream
+                    .getTracks()
+                    .forEach((track) => track.stop());
+            }
+
+            if (screenStreamRef.current) {
+                screenStreamRef.current.getTracks().forEach((track) => {
+                    track.onended = null;
+                    track.stop();
+                });
+
+                screenStreamRef.current = null;
             }
 
             if (localVideoRef.current) {
@@ -325,12 +364,12 @@ function Meetingroom({ meetingCode }) {
         const stream = streamRef.current;
         if (!stream) return;
 
-        const audioTracks = stream.getAudioTracks();
-        if (audioTracks.length === 0) return;
+        const tracks = stream.getAudioTracks();
+        if (!tracks.length) return;
 
         const nextMuted = !muted;
 
-        audioTracks.forEach((track) => {
+        tracks.forEach((track) => {
             track.enabled = !nextMuted;
         });
 
@@ -341,16 +380,134 @@ function Meetingroom({ meetingCode }) {
         const stream = streamRef.current;
         if (!stream) return;
 
-        const videoTracks = stream.getVideoTracks();
-        if (videoTracks.length === 0) return;
+        const tracks = stream.getVideoTracks();
+        if (!tracks.length) return;
 
         const nextCameraOff = !cameraOff;
 
-        videoTracks.forEach((track) => {
+        tracks.forEach((track) => {
             track.enabled = !nextCameraOff;
         });
 
         setCameraOff(nextCameraOff);
+    };
+
+    const stopScreenShare = async () => {
+        const screenStream = screenStreamRef.current;
+        if (!screenStream) return;
+
+        screenStreamRef.current = null;
+
+        screenStream.getTracks().forEach((track) => {
+            track.onended = null;
+            track.stop();
+        });
+
+        const cameraTrack = streamRef.current?.getVideoTracks()[0];
+
+        const videoSender = peerRef.current
+            ?.getSenders()
+            .find((sender) => sender.track?.kind === "video");
+
+        try {
+            if (videoSender && cameraTrack) {
+                await videoSender.replaceTrack(cameraTrack);
+            }
+
+            if (localVideoRef.current && streamRef.current) {
+                localVideoRef.current.srcObject = streamRef.current;
+            }
+
+            setIsSharingScreen(false);
+            setMessage("Screen sharing stopped.");
+            setError("");
+        } catch (err) {
+            console.error("Could not restore camera:", err);
+            setError("Could not restore the camera.");
+            setIsSharingScreen(false);
+        }
+    };
+
+    const startScreenShare = async () => {
+        if (!navigator.mediaDevices?.getDisplayMedia) {
+            setError("Screen sharing is not supported by this browser.");
+            return;
+        }
+
+        if (!peerRef.current || !streamRef.current) {
+            setError("The meeting is not ready for screen sharing.");
+            return;
+        }
+
+        try {
+            setError("");
+            setMessage("");
+
+            const screenStream =
+                await navigator.mediaDevices.getDisplayMedia({
+                    video: true,
+                    audio: false,
+                });
+
+            const screenTrack = screenStream.getVideoTracks()[0];
+
+            if (!screenTrack) {
+                screenStream.getTracks().forEach((track) => track.stop());
+                setError("No screen video track was available.");
+                return;
+            }
+
+            const videoSender = peerRef.current
+                ?.getSenders()
+                .find((sender) => sender.track?.kind === "video");
+
+            if (!videoSender) {
+                screenStream.getTracks().forEach((track) => track.stop());
+                setError("Video connection is not ready.");
+                return;
+            }
+
+            screenStreamRef.current = screenStream;
+
+            await videoSender.replaceTrack(screenTrack);
+
+            if (localVideoRef.current) {
+                localVideoRef.current.srcObject = screenStream;
+            }
+
+            screenTrack.onended = () => {
+                stopScreenShare();
+            };
+
+            setIsSharingScreen(true);
+            setMessage("You are sharing your screen.");
+        } catch (err) {
+            console.error("Screen sharing error:", err);
+
+            setError(
+                err.name === "NotAllowedError"
+                    ? "Screen sharing was cancelled or permission was denied."
+                    : "Unable to share your screen."
+            );
+        }
+    };
+
+    const sendChatMessage = (e) => {
+        e.preventDefault();
+
+        const text = chatInput.trim();
+        const socket = socketRef.current;
+
+        if (!text || !socket?.connected) return;
+
+        socket.emit("chat-message", text);
+        setChatInput("");
+    };
+
+    const handleLeaveMeeting = () => {
+        if (typeof onLeave === "function") {
+            onLeave();
+        }
     };
 
     return (
@@ -395,12 +552,13 @@ function Meetingroom({ meetingCode }) {
                                         display: "block",
                                         minHeight: "220px",
                                         maxHeight: "420px",
-                                        objectFit: "cover",
+                                        objectFit: "contain",
                                     }}
                                 />
                             </div>
+
                             <p className="text-center mt-2 mb-0">
-                                You
+                                {isSharingScreen ? "Your screen" : "You"}
                             </p>
                         </div>
 
@@ -415,12 +573,13 @@ function Meetingroom({ meetingCode }) {
                                         display: "block",
                                         minHeight: "220px",
                                         maxHeight: "420px",
-                                        objectFit: "cover",
+                                        objectFit: "contain",
                                     }}
                                 />
                             </div>
+
                             <p className="text-center mt-2 mb-0">
-                                Remote participant
+                                Remote participant / shared screen
                             </p>
                         </div>
                     </div>
@@ -445,6 +604,132 @@ function Meetingroom({ meetingCode }) {
                         >
                             {cameraOff ? "Turn camera on" : "Turn camera off"}
                         </button>
+
+                        <button
+                            type="button"
+                            className={`btn ${
+                                isSharingScreen
+                                    ? "btn-warning"
+                                    : "btn-outline-primary"
+                            }`}
+                            onClick={
+                                isSharingScreen
+                                    ? stopScreenShare
+                                    : startScreenShare
+                            }
+                        >
+                            {isSharingScreen ? "Stop Sharing" : "Share Screen"}
+                        </button>
+
+                        <button
+                            type="button"
+                            className="btn btn-danger"
+                            onClick={handleLeaveMeeting}
+                        >
+                            Leave Meeting
+                        </button>
+                    </div>
+
+                    {/* Meeting chat */}
+                    <div className="card mt-4">
+                        <div className="card-header">
+                            <h5 className="mb-0">Meeting Chat</h5>
+                        </div>
+
+                        <div
+                            className="card-body"
+                            style={{
+                                height: "260px",
+                                overflowY: "auto",
+                            }}
+                        >
+                            {chatMessages.length === 0 && (
+                                <p className="text-muted text-center mt-3">
+                                    No messages yet. Start the conversation!
+                                </p>
+                            )}
+
+                            {chatMessages.map((chatMessage, index) => {
+                                const isMine =
+                                    chatMessage.senderId ===
+                                    socketRef.current?.id;
+
+                                return (
+                                    <div
+                                        key={
+                                            chatMessage.id ||
+                                            `${chatMessage.senderId}-${index}`
+                                        }
+                                        className={`d-flex mb-3 ${
+                                            isMine
+                                                ? "justify-content-end"
+                                                : "justify-content-start"
+                                        }`}
+                                    >
+                                        <div
+                                            className={`rounded p-2 ${
+                                                isMine
+                                                    ? "bg-primary text-white"
+                                                    : "bg-light text-dark"
+                                            }`}
+                                            style={{
+                                                maxWidth: "80%",
+                                                overflowWrap: "anywhere",
+                                            }}
+                                        >
+                                            <div className="small fw-bold mb-1">
+                                                {isMine ? "You" : "Participant"}
+                                            </div>
+
+                                            <div>{chatMessage.text}</div>
+
+                                            <div className="small mt-1 opacity-75">
+                                                {chatMessage.time
+                                                    ? new Date(
+                                                          chatMessage.time
+                                                      ).toLocaleTimeString([], {
+                                                          hour: "2-digit",
+                                                          minute: "2-digit",
+                                                      })
+                                                    : ""}
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+
+                            <div ref={chatEndRef} />
+                        </div>
+
+                        <div className="card-footer">
+                            <form
+                                onSubmit={sendChatMessage}
+                                className="d-flex gap-2"
+                            >
+                                <input
+                                    type="text"
+                                    className="form-control"
+                                    placeholder="Type a message..."
+                                    value={chatInput}
+                                    onChange={(e) =>
+                                        setChatInput(e.target.value)
+                                    }
+                                    maxLength={1000}
+                                    aria-label="Chat message"
+                                />
+
+                                <button
+                                    type="submit"
+                                    className="btn btn-primary"
+                                    disabled={
+                                        !chatInput.trim() ||
+                                        !socketRef.current?.connected
+                                    }
+                                >
+                                    Send
+                                </button>
+                            </form>
+                        </div>
                     </div>
                 </div>
             </div>

@@ -1,0 +1,35 @@
+
+/* Registration-specific heading adjustments */
+
+.auth-card:has(#confirm-password) .auth-heading {
+  margin-bottom: 25px;
+}
+
+.auth-card:has(#confirm-password) .auth-field {
+  margin-bottom: 17px;
+}
+
+.auth-card:has(#confirm-password) .auth-card-footer {
+  margin-top: 22px;
+}
+
+.auth-success {
+  margin: -2px 0 18px;
+  padding: 11px 12px;
+  border: 1px solid #c8e6d0;
+  border-radius: 7px;
+  background: #f2faf4;
+  color: #246b3a;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+@media (max-width: 520px) {
+  .auth-card:has(#confirm-password) {
+    padding-top: 26px;
+  }
+
+  .auth-card:has(#confirm-password) .auth-heading h1 {
+    font-size: 26px;
+  }
+}
